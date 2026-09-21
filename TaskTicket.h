@@ -28,6 +28,13 @@ private:
     friend class TaskScheduleManager;
     TaskTicket(WorkingTask* workingTask, SlewingTask* slewingTask, TaskScheduleManager* manager);
 
+    // Marks the ticket spent: nulls all three fields, so the destructor
+    // no-ops and workingTask()/slewingTask() assert if called afterward.
+    // Called by TaskScheduleManager::completeAndRemove once it has
+    // finished removing the underlying task — the ticket owns what
+    // "spent" means, rather than the manager reaching in field by field.
+    void spend();
+
     WorkingTask*          workingTask_;
     SlewingTask*          slewingTask_;
     TaskScheduleManager*  manager_;

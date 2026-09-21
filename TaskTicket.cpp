@@ -48,3 +48,9 @@ const SlewingTask* TaskTicket::slewingTask() const {
     assert(workingTask_ && "TaskTicket accessed after completeAndRemove (or after being moved from)");
     return slewingTask_;
 }
+
+void TaskTicket::spend() {
+    workingTask_ = nullptr;
+    slewingTask_ = nullptr;
+    manager_ = nullptr;
+}

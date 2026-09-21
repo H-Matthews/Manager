@@ -50,9 +50,7 @@ std::optional<TaskTicket> TaskScheduleManager::findWithinPeriodAndReserve(Direct
 void TaskScheduleManager::completeAndRemove(TaskTicket ticket) {
     std::lock_guard<std::mutex> lock(mutex_);
     removeCascadeLocked(ticket.workingTask_);
-    ticket.workingTask_ = nullptr;
-    ticket.slewingTask_ = nullptr;
-    ticket.manager_ = nullptr;
+    ticket.spend();
     // ticket is now spent — its destructor (about to run, since it's a
     // by-value parameter) sees null and no-ops instead of releasing a
     // reservation that no longer exists.
