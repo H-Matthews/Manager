@@ -113,42 +113,66 @@ int main() {
         check(stalePair[0] == nullptr && stalePair[1] == nullptr, "unique_ptrs released after the successful retry");
     }
 
-    std::cout << "\n--- tryTaskRemoval ---\n";
+    std::cout << "\n--- findAndReserve: cleanup examines a task, then removes it ---\n";
     {
         auto* toExpire = new WorkingTask(20, /*ctpId=*/800, Direction::Receiver, at(200), at(210));
         schedule.addTask(toExpire);
 
-        auto result = manager.tryTaskRemoval(20);
-        check(!result.has_value(), "cleanup successfully removes an unreserved, expired WorkingTask");
+        auto result = manager.findAndReserve(20);
+        auto* ticket = std::get_if<TaskTicket>(&result);
+        check(ticket != nullptr, "cleanup grabs an unreserved task to examine it");
+        check(ticket->workingTask().getEndTime() == at(210), "ticket exposes the live task's fields for examination");
 
-        auto again = manager.tryTaskRemoval(20);
-        check(again == TaskScheduleManager::RemovalError::UNKNOWN, "a second sweep reports UNKNOWN rather than removing again");
+        manager.completeAndRemove(std::move(*ticket));   // examined it, confirmed it's really expired
+
+        auto again = manager.findAndReserve(20);
+        auto* err = std::get_if<TaskScheduleManager::ReserveError>(&again);
+        check(err != nullptr && *err == TaskScheduleManager::ReserveError::UNKNOWN, "a second sweep reports UNKNOWN rather than removing again");
     }
 
-    std::cout << "\n--- tryTaskRemoval skips a currently-reserved task ---\n";
+    std::cout << "\n--- findAndReserve: leaves a task someone else is holding alone ---\n";
     {
         auto* stillNeeded = new WorkingTask(21, /*ctpId=*/801, Direction::Sender, at(250), at(260));
         schedule.addTask(stillNeeded);
 
-        auto held = manager.findEarliestAndReserve(801, Direction::Sender);
-        check(held.has_value(), "task reserved ahead of a cleanup race");
+        auto heldResult = manager.findEarliestAndReserve(801, Direction::Sender);
+        check(heldResult.has_value(), "Controller reserves the task first");
 
-        auto result = manager.tryTaskRemoval(21);   // cleanup runs while it's still checked out
-        check(result == TaskScheduleManager::RemovalError::RESERVED, "cleanup reports RESERVED, distinct from UNKNOWN");
+        auto cleanupResult = manager.findAndReserve(21);   // cleanup sweep runs while it's still checked out
+        auto* err = std::get_if<TaskScheduleManager::ReserveError>(&cleanupResult);
+        check(err != nullptr && *err == TaskScheduleManager::ReserveError::RESERVED, "cleanup reports RESERVED, distinct from UNKNOWN");
 
         bool stillInSchedule = false;
         for (auto* t : schedule.getTasks<WorkingTask>()) {
             if (t->getId() == 21) stillInSchedule = true;
         }
-        check(stillInSchedule, "cleanup skipped the reserved task instead of removing it");
+        check(stillInSchedule, "cleanup left the reserved task alone instead of removing it");
 
-        manager.completeAndRemove(std::move(*held));
+        manager.completeAndRemove(std::move(*heldResult));
 
         stillInSchedule = false;
         for (auto* t : schedule.getTasks<WorkingTask>()) {
             if (t->getId() == 21) stillInSchedule = true;
         }
-        check(!stillInSchedule, "task is actually removed once completeAndRemove runs");
+        check(!stillInSchedule, "task is actually removed once its holder completes it");
+    }
+
+    std::cout << "\n--- findAndReserve: cleanup examines a task, then decides NOT to remove it ---\n";
+    {
+        auto* notYetExpired = new WorkingTask(22, /*ctpId=*/802, Direction::Sender, at(300), at(310));
+        schedule.addTask(notYetExpired);
+
+        {
+            auto result = manager.findAndReserve(22);
+            auto* ticket = std::get_if<TaskTicket>(&result);
+            check(ticket != nullptr, "cleanup grabs the task to examine it");
+            // Examined ticket->workingTask() here and decided it's not
+            // actually expired yet — the ticket just falls out of scope,
+            // releasing the reservation without touching the schedule.
+        }
+
+        auto secondLook = manager.findAndReserve(22);
+        check(std::holds_alternative<TaskTicket>(secondLook), "reservation was released — task is reservable again after being examined and left alone");
     }
 
     std::cout << "\n--- concurrency: two threads racing for the same task ---\n";

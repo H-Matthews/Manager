@@ -3,6 +3,7 @@
 #include <unordered_set>
 #include <functional>
 #include <optional>
+#include <variant>
 #include <vector>
 #include <memory>
 #include "TaskTypes.h"
@@ -38,21 +39,23 @@ public:
     // rather than silently stale if they try to reuse it afterward.
     void completeAndRemove(TaskTicket ticket);
 
-    // Why tryTaskRemoval didn't remove anything — returned only on
-    // failure; success is nullopt. UNKNOWN and RESERVED both mean
-    // "nothing was removed," but for different reasons, so callers that
-    // want to log/alert on a stuck reservation need to tell them apart
-    // rather than treating both as one failure case.
-    enum class RemovalError {
+    // Why findAndReserve couldn't produce a ticket for this ID. UNKNOWN
+    // and RESERVED both mean "no ticket," but for different reasons —
+    // callers (the cleanup thread, mainly) that want to log/alert on a
+    // stuck reservation need to tell them apart rather than treating
+    // both as one failure case.
+    enum class ReserveError {
         UNKNOWN,   // no task with this ID — already removed some other way
-        RESERVED   // found, but currently reserved — left for its holder to remove
+        RESERVED   // found, but currently reserved by someone else
     };
 
-    // Called by the periodic cleanup thread once it decides a WorkingTask
-    // has expired (end time + X seconds elapsed). Removes it (and its
-    // linked SlewingTask, if any) and returns nullopt on success;
-    // otherwise returns the reason it couldn't.
-    std::optional<RemovalError> tryTaskRemoval(TaskId workingTaskId);
+    // Looks up a specific WorkingTask by ID and reserves it (and its
+    // linked SlewingTask, if any) if found and not already reserved.
+    // Used by the periodic cleanup thread: grab the task, examine its
+    // current fields (e.g. confirm it's actually still expired), then
+    // either completeAndRemove it, or just let the returned ticket fall
+    // out of scope to put it back for the next sweep.
+    std::variant<TaskTicket, ReserveError> findAndReserve(TaskId workingTaskId);
 
     // --- Task creation: predecessor lookup + atomic add ---
 

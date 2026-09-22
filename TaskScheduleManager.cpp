@@ -56,19 +56,21 @@ void TaskScheduleManager::completeAndRemove(TaskTicket ticket) {
     // reservation that no longer exists.
 }
 
-std::optional<TaskScheduleManager::RemovalError> TaskScheduleManager::tryTaskRemoval(TaskId workingTaskId) {
+std::variant<TaskTicket, TaskScheduleManager::ReserveError> TaskScheduleManager::findAndReserve(TaskId workingTaskId) {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    if (reserved_.count(workingTaskId)) return RemovalError::RESERVED;   // in use — skip this round
+    if (reserved_.count(workingTaskId)) return ReserveError::RESERVED;   // someone else already has it
 
     std::vector<WorkingTask*> tasks = schedule_.getTasks<WorkingTask>();
     for (WorkingTask* t : tasks) {
         if (t->getId() == workingTaskId) {
-            removeCascadeLocked(t);
-            return std::nullopt;
+            reserved_.insert(t->getId());
+            SlewingTask* slew = t->getSlewingTask();
+            if (slew) reserved_.insert(slew->getId());
+            return TaskTicket(t, slew, this);
         }
     }
-    return RemovalError::UNKNOWN;   // already removed through the normal path
+    return ReserveError::UNKNOWN;   // no task with this ID
 }
 
 void TaskScheduleManager::release(WorkingTask* workingTask) {
